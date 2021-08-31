@@ -242,11 +242,13 @@ def try_fakeBackend(circuit, backend, options=None, TKET = False):
 #         raise NotImplementedError
 
 def evaluate_circ(circuit, backend, options=None, TKET = False):
-    fake_backend_data = try_fakeBackend(circuit, backend, options=None, TKET = TKET)
-    if fake_backend_data:
-        return fake_backend_data
+    if type(backend) is list:
+        fake_backend_data = try_fakeBackend(circuit, backend, options=None, TKET = TKET)
+        if fake_backend_data is not None:
+            return fake_backend_data
 
     simulator = aer.Aer.get_backend('aer_simulator')
+    
     if backend=='statevector_simulator':
         circuit.save_statevector()
         result = simulator.run(circuit).result()
