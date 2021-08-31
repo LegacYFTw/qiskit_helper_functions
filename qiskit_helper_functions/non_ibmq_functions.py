@@ -6,11 +6,33 @@ import qiskit.circuit.library as library
 from qiskit.circuit.library import CXGate, IGate, RZGate, SXGate, XGate
 from qiskit.converters import circuit_to_dag, dag_to_circuit
 from qiskit.dagcircuit.dagcircuit import DAGCircuit
-from qiskit.test.mock import FakeVigo
+from qiskit.test.mock import FakeBackend, FakeTokyo, FakeVigo, FakeMelbourne, FakePoughkeepsie, FakeQasmSimulator, FakeRueschlikon, FakeTenerife
+from qiskit.providers.aer import noise
 import numpy as np
 
 from qcg.generators import gen_supremacy, gen_hwea, gen_BV, gen_qft, gen_sycamore, gen_adder, gen_grover
 from qiskit_helper_functions.conversions import dict_to_array
+from qiskit_helper_functions.tket_functions import Tket
+
+available_backend = {
+    "FakeTokyo": FakeTokyo, 
+    "FakeVigo": FakeVigo, 
+    "FakeMelbourne": FakeMelbourne, 
+    "FakePoughkeepsie": FakePoughkeepsie, 
+    "FakeRueschlikon": FakeRueschlikon, 
+    "FakeTenerife": FakeTenerife
+}
+
+def get_alloted_backend(backend_stack, circ):
+    for device, circuits in backend_stack.items():
+        if circ in circuits:
+            return device
+    from pprint import pprint
+    pprint(backend_stack)
+    print("\n\n")
+    print(type(circ))
+    print([ circ ])
+    raise Exception(f"The circuit {[circ]} has not been alocated to any device")
 
 def read_dict(filename):
     if os.path.isfile(filename):
@@ -100,7 +122,130 @@ def find_process_jobs(jobs,rank,num_workers):
     process_jobs = list(jobs[jobs_start:jobs_stop])
     return process_jobs
 
-def evaluate_circ(circuit, backend, options=None):
+class CircuitLargerThanChip(Exception):
+    pass
+
+def check_chip_compatiblity(backend, circuit, raise_exception=True):
+    if backend._configuration.n_qubits < circuit.num_qubits:
+        if raise_exception:
+            raise CircuitLargerThanChip(f"Circuit is larger than chip size.\nChip:{backend}\tCircuit:{circuit.num_qubits}")
+        else:
+            return False
+    # print(f"Chip:{backend} {backend._configuration.n_qubits}\tCircuit:{circuit.num_qubits}")
+    return True
+
+def get_backend_name(backend):
+    for name, device in available_backend.items():
+        if device is backend:
+            return name
+        if backend == name:
+            return name
+    raise Exception(f"Backend Error: No specified backend {str(backend)} found.")
+
+def try_fakeBackend(circuit, backend, options=None, TKET = False):
+    if "tket_" in str(backend):
+        backend_name = get_backend_name(backend[5:])
+        TKET = True
+    else:
+        backend_name = get_backend_name(backend)
+    # print("BACKEND : ", backend_name)
+    if backend_name in available_backend:
+        backend = available_backend[backend_name]()
+        # if ENABLE_GPU:
+        #     backend.set_options(device='GPU')
+        # backend.set_options(max_parallel_threads=300, max_parallel_experiments=20, max_parallel_shots=128)
+        noise_model = noise.NoiseModel.from_backend(backend)
+        if isinstance(options,dict) and 'num_shots' in options:
+            num_shots = options['num_shots']
+        else:
+            num_shots = max(1024,2**circuit.num_qubits)
+        if isinstance(options,dict) and 'memory' in options:
+            memory = options['memory']
+        else:
+            memory = False
+        if circuit.num_clbits == 0:
+            circuit = apply_measurement(circuit=circuit,qubits=circuit.qubits)
+            if TKET:
+                circuit = Tket(circuit, backend_name)
+            check_chip_compatiblity(backend, circuit)
+            print('Executing Circuit')
+            job = execute(circuit, backend=backend, noise_model=noise_model, shots=num_shots, memory=memory).result()
+        if memory:
+            qasm_memory = np.array(job.get_memory(0))
+            assert len(qasm_memory)==num_shots
+            return qasm_memory
+        else:
+            counts = job.get_counts(0)
+            assert sum(counts.values())==num_shots
+            counts = dict_to_array(distribution_dict=counts,force_prob=True)
+            return counts
+    return None
+
+# def evaluate_circ(circuit, backend, options=None):
+#     simulator = aer.Aer.get_backend('aer_simulator')
+#     if backend=='statevector_simulator':
+#         circuit.save_statevector()
+#         result = simulator.run(circuit).result()
+#         counts = result.get_counts(circuit)
+#         prob_vector = np.zeros(2**circuit.num_qubits)
+#         for binary_state in counts:
+#             state = int(binary_state,2)
+#             prob_vector[state] = counts[binary_state]
+#         return prob_vector
+#     elif backend == 'noiseless_qasm_simulator':
+#         if isinstance(options,dict) and 'num_shots' in options:
+#             num_shots = options['num_shots']
+#         else:
+#             num_shots = max(1024,2**circuit.num_qubits)
+
+#         if isinstance(options,dict) and 'memory' in options:
+#             memory = options['memory']
+#         else:
+#             memory = False
+#         if circuit.num_clbits == 0:
+#             circuit.measure_all()
+#         result = simulator.run(circuit, shots=num_shots, memory=memory).result()
+
+#         if memory:
+#             qasm_memory = np.array(result.get_memory(circuit))
+#             assert len(qasm_memory)==num_shots
+#             return qasm_memory
+#         else:
+#             noiseless_counts = result.get_counts(circuit)
+#             assert sum(noiseless_counts.values())==num_shots
+#             noiseless_counts = dict_to_array(distribution_dict=noiseless_counts,force_prob=True)
+#             return noiseless_counts
+#     elif backend == 'FakeVigo':
+#         if isinstance(options,dict) and 'num_shots' in options:
+#             num_shots = options['num_shots']
+#         else:
+#             num_shots = max(1024,2**circuit.num_qubits)
+
+#         if isinstance(options,dict) and 'memory' in options:
+#             memory = options['memory']
+#         else:
+#             memory = False
+#         if circuit.num_clbits == 0:
+#             circuit.measure_all()
+#         result = simulator.run(circuit, shots=num_shots, memory=memory).result()
+
+#         if memory:
+#             qasm_memory = np.array(result.get_memory(circuit))
+#             assert len(qasm_memory)==num_shots
+#             return qasm_memory
+#         else:
+#             noiseless_counts = result.get_counts(circuit)
+#             assert sum(noiseless_counts.values())==num_shots
+#             noiseless_counts = dict_to_array(distribution_dict=noiseless_counts,force_prob=True)
+#             return noiseless_counts
+#     else:
+#         raise NotImplementedError
+
+def evaluate_circ(circuit, backend, options=None, TKET = False):
+    fake_backend_data = try_fakeBackend(circuit, backend, options=None, TKET = TKET)
+    if fake_backend_data:
+        return fake_backend_data
+
     simulator = aer.Aer.get_backend('aer_simulator')
     if backend=='statevector_simulator':
         circuit.save_statevector()
@@ -112,29 +257,6 @@ def evaluate_circ(circuit, backend, options=None):
             prob_vector[state] = counts[binary_state]
         return prob_vector
     elif backend == 'noiseless_qasm_simulator':
-        if isinstance(options,dict) and 'num_shots' in options:
-            num_shots = options['num_shots']
-        else:
-            num_shots = max(1024,2**circuit.num_qubits)
-
-        if isinstance(options,dict) and 'memory' in options:
-            memory = options['memory']
-        else:
-            memory = False
-        if circuit.num_clbits == 0:
-            circuit.measure_all()
-        result = simulator.run(circuit, shots=num_shots, memory=memory).result()
-
-        if memory:
-            qasm_memory = np.array(result.get_memory(circuit))
-            assert len(qasm_memory)==num_shots
-            return qasm_memory
-        else:
-            noiseless_counts = result.get_counts(circuit)
-            assert sum(noiseless_counts.values())==num_shots
-            noiseless_counts = dict_to_array(distribution_dict=noiseless_counts,force_prob=True)
-            return noiseless_counts
-    elif backend == 'FakeVigo':
         if isinstance(options,dict) and 'num_shots' in options:
             num_shots = options['num_shots']
         else:
