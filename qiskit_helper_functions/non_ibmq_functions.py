@@ -134,6 +134,18 @@ def check_chip_compatiblity(backend, circuit, raise_exception=True):
     # print(f"Chip:{backend} {backend._configuration.n_qubits}\tCircuit:{circuit.num_qubits}")
     return True
 
+def get_alloted_backend(backend_stack, circ):
+    for device, circuits in backend_stack.items():
+        if circ in circuits:
+            print(f"Running on device {device}")
+            return device
+    from pprint import pprint
+    pprint(backend_stack)
+    print("\n\n")
+    print(type(circ))
+    print([ circ ])
+    raise Exception(f"The circuit {[circ]} has not been alocated to any device")
+
 def get_backend_name(backend):
     for name, device in available_backend.items():
         if device is backend:
