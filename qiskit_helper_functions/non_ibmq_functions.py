@@ -6,6 +6,7 @@ import qiskit.circuit.library as library
 from qiskit.circuit.library import CXGate, IGate, RZGate, SXGate, XGate
 from qiskit.converters import circuit_to_dag, dag_to_circuit
 from qiskit.dagcircuit.dagcircuit import DAGCircuit
+from qiskit.test.mock import FakeVigo
 import numpy as np
 
 from qcg.generators import gen_supremacy, gen_hwea, gen_BV, gen_qft, gen_sycamore, gen_adder, gen_grover
@@ -111,6 +112,29 @@ def evaluate_circ(circuit, backend, options=None):
             prob_vector[state] = counts[binary_state]
         return prob_vector
     elif backend == 'noiseless_qasm_simulator':
+        if isinstance(options,dict) and 'num_shots' in options:
+            num_shots = options['num_shots']
+        else:
+            num_shots = max(1024,2**circuit.num_qubits)
+
+        if isinstance(options,dict) and 'memory' in options:
+            memory = options['memory']
+        else:
+            memory = False
+        if circuit.num_clbits == 0:
+            circuit.measure_all()
+        result = simulator.run(circuit, shots=num_shots, memory=memory).result()
+
+        if memory:
+            qasm_memory = np.array(result.get_memory(circuit))
+            assert len(qasm_memory)==num_shots
+            return qasm_memory
+        else:
+            noiseless_counts = result.get_counts(circuit)
+            assert sum(noiseless_counts.values())==num_shots
+            noiseless_counts = dict_to_array(distribution_dict=noiseless_counts,force_prob=True)
+            return noiseless_counts
+    elif backend == 'FakeVigo':
         if isinstance(options,dict) and 'num_shots' in options:
             num_shots = options['num_shots']
         else:
